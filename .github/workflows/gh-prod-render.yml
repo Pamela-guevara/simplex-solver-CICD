@@ -218,7 +218,7 @@ jobs:
           STATUS="${{ job.status }}"
           REPO="${{ github.repository }}"
           URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          VERSION="${{ env.VERSION:}}"
+          VERSION="${{ env.VERSION}}"
       
           if [ "$STATUS" = "success" ]; then
             COLOR=3066993
