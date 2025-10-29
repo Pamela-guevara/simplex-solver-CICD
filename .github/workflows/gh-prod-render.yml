@@ -8,8 +8,8 @@ on:
 env:
   VERSION: v1.0.${{ github.run_number }}
   GHCR_OWNER: ${{ secrets.GH_USERNAME }}
-  BACKEND_IMAGE: ghcr.io/${{ github.repository_owner }}/simplex-solver-backend
-  FRONTEND_IMAGE: ghcr.io/${{ github.repository_owner }}/simplex-solver-frontend
+  BACKEND_IMAGE: ghcr.io/${{ secrets.GH_USERNAME }}/simplex-solver-backend
+  FRONTEND_IMAGE: ghcr.io/${{ secrets.GH_USERNAME }}/simplex-solver-frontend
   BACKEND_SERVICE: simplex-backend
   FRONTEND_SERVICE: simplex-frontend
   REGION: oregon
