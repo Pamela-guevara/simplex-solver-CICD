@@ -57,7 +57,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
       - name: Run pytest
-        run: pytest ./test_simplex_api.py
+        run: pytest -q
       - name: Run manual test
         run: python -m tests.test_manual
 
