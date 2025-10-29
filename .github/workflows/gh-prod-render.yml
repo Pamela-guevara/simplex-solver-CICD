@@ -106,8 +106,8 @@ jobs:
           push: true
           tags: |
             ${{ env.FRONTEND_IMAGE }}:${{ env.VERSION }}
-        build-args:
-          NGINX_CONF: nginx_render.conf
+          build-args:
+            NGINX_CONF: nginx_render.conf
 
   # =========================================================
   # 4️. DEPLOY TO RENDER
