@@ -214,9 +214,12 @@ jobs:
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
         run: |
+          sudo apt-get update && sudo apt-get install -y jq
           STATUS="${{ job.status }}"
           REPO="${{ github.repository }}"
           URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          VERSION="${{ env.VERSION:-unknown}}"
+      
           if [ "$STATUS" = "success" ]; then
             COLOR=3066993
             TITLE="✅ CI/CD Success"
@@ -224,11 +227,18 @@ jobs:
             COLOR=15158332
             TITLE="❌ CI/CD Failed"
           fi
+      
           PAYLOAD=$(jq -n \
             --arg title "$TITLE" \
             --arg repo "$REPO" \
             --arg url "$URL" \
-            --arg version "${{ env.VERSION }}" \
-            '{embeds:[{title:$title, description:"Repo: **\($repo)**\nVersion: **\($version)**", url:$url, color:'"$COLOR"'}]}')
-          curl -s -H "Content-Type: application/json" \
-               -d "$PAYLOAD" "$DISCORD_WEBHOOK"
+            --arg version "$VERSION" \
+            --argjson color "$COLOR" \
+            '{embeds:[{title:$title, description:"Repo: **\($repo)**\nVersion: **\($version)**", url:$url, color:$color}]}')
+      
+          echo "Sending payload:"
+          echo "$PAYLOAD"
+      
+          curl -v -H "Content-Type: application/json" \
+               -d "$PAYLOAD" \
+               "$DISCORD_WEBHOOK"
