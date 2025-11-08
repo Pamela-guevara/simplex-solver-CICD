@@ -2,7 +2,7 @@ name: CI · Build · CodeQL · GHCR · Render · Discord
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: ["main", "master"]
   #workflow_dispatch:
 
 env:
@@ -92,11 +92,11 @@ jobs:
             ${{ env.BACKEND_IMAGE }}:${{ env.VERSION }}
 
       # --- Build Frontend ---
-      - name: Prepare Nginx Config (Replace Backend URL)
-        run: |
-          cp frontend/nginx.conf frontend/nginx_render.conf
-          sed -i 's|proxy_pass http://backend:8000/;|proxy_pass https://simplex-backend.onrender.com/;|' frontend/nginx_render.conf
-          echo "✅ Updated nginx.conf for Render deployment"
+      # - name: Prepare Nginx Config (Replace Backend URL)
+      #   run: |
+      #     cp frontend/nginx.conf frontend/nginx_render.conf
+      #     sed -i 's|proxy_pass http://backend:8000/;|proxy_pass https://simplex-backend.onrender.com/;|' frontend/nginx_render.conf
+      #     echo "✅ Updated nginx.conf for Render deployment"
 
       - name: Build & Push Frontend Image
         uses: docker/build-push-action@v6
@@ -122,84 +122,186 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Define JSON for Backend service
+      - name: Get existing services
+        id: get-services
         run: |
-          cat > backend.json <<EOF
-          {
-            "serviceDetails": {
+          # Obtener servicios existentes
+          SERVICES_JSON=$(curl -s -H "Authorization: Bearer $RENDER_API_KEY" "https://api.render.com/v1/services?limit=5")
+          echo "SERVICES_JSON=$SERVICES_JSON" >> $GITHUB_OUTPUT
+
+          BACKEND_ID=$(echo "$SERVICES_JSON" | jq -r '.[] | select(.service.name=="simplex-backend") | .service.id')
+          FRONTEND_ID=$(echo "$SERVICES_JSON" | jq -r '.[] | select(.service.name=="simplex-frontend") | .service.id')
+
+          echo "BACKEND_ID=$BACKEND_ID" >> $GITHUB_ENV
+          echo "FRONTEND_ID=$FRONTEND_ID" >> $GITHUB_ENV
+          echo "Backend ID: $BACKEND_ID"
+          echo "Frontend ID: $FRONTEND_ID"
+
+      - name: Create or Update Backend Service
+        run: |
+          if [ -z "$BACKEND_ID" ]; then
+            echo "🆕 Creating new backend service..."
+            cat > backend.json <<EOF
+            {
+              "autoDeploy": false,
+              "branch": null,
               "name": "${{ env.BACKEND_SERVICE }}",
+              "ownerId": "${{ secrets.OWNER_ID }}",
+              "repo": "https://github.com/${{ github.repository }}",
               "type": "web_service",
               "runtime": "docker",
-              "repo": "${{ github.repository }}",
-              "region": "${{ env.REGION }}",
-              "plan": "${{ env.PLAN }}",
-              "dockerCommand": "",
-              "envVars": [],
-              "rootDir": "/",
               "dockerImage": "${{ env.BACKEND_IMAGE }}:${{ env.VERSION }}",
-              "autoDeploy": false,
+              # "dockerContext": "./backend",
+              # "dockerfilePath": "./backend/Dockerfile",
+              "plan": "${{ env.PLAN }}",
+              "regionId": "render-${{ env.REGION }}",
+              "envVars": [],
               "numInstances": 1,
-              "disk": { "name": "data", "mountPath": "/data", "sizeGB": 1 },
+              "disk": { "name": "data", "mountPath": "/data", "sizeGB": 0.5 },
               "port": 8000
             }
-          }
-          EOF
+            EOF
+            
+            curl -X POST "https://api.render.com/v1/services" \
+              -H "Authorization: Bearer $RENDER_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d @backend.json
+          else
+            echo "🔄 Backend service already exists with ID: $BACKEND_ID"
+          fi
 
-      - name: Define JSON for Frontend service
+      - name: Create or Update Frontend Service
         run: |
-          cat > frontend.json <<EOF
-          {
-            "serviceDetails": {
+          if [ -z "$FRONTEND_ID" ]; then
+            echo "🆕 Creating new frontend service..."
+            cat > frontend.json <<EOF
+            {
+              "autoDeploy": false,
+              "branch": null,
               "name": "${{ env.FRONTEND_SERVICE }}",
+              "ownerId": "${{ secrets.OWNER_ID }}",
+              "repo": "https://github.com/${{ github.repository }}",
               "type": "web_service",
               "runtime": "docker",
-              "repo": "${{ github.repository }}",
-              "region": "${{ env.REGION }}",
-              "plan": "${{ env.PLAN }}",
-              "dockerCommand": "",
-              "rootDir": "/",
               "dockerImage": "${{ env.FRONTEND_IMAGE }}:${{ env.VERSION }}",
-              "autoDeploy": false,
-              "numInstances": 1,
+              # "dockerContext": "./frontend",
+              # "dockerfilePath": "./frontend/Dockerfile",
+              "plan": ${{ env.PLAN }},
+              "regionId": "render-${{ env.REGION }}",
               "envVars": [
-                { "key": "BACKEND_URL", "value": "https://${{ env.BACKEND_SERVICE }}.onrender.com" }
+                {
+                  "key": "BACKEND_URL",
+                  "value": "https://${{ env.BACKEND_SERVICE }}.onrender.com"
+                }
               ],
-              "port": 80
+              "port": 80,
+              "numInstances": 1
             }
-          }
-          EOF
+            EOF
+            
+            curl -X POST "https://api.render.com/v1/services" \
+              -H "Authorization: Bearer $RENDER_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d @frontend.json
+          else
+            echo "🔄 Frontend service already exists with ID: $FRONTEND_ID"
+          fi
 
-      - name: Try to create Backend service
-        continue-on-error: true
-        run: |
-          curl -s -X POST https://api.render.com/v1/services \
-            -H "Authorization: Bearer $RENDER_API_KEY" \
-            -H "Content-Type: application/json" \
-            -d @backend.json || echo "Backend may already exist."
-
-      - name: Try to create Frontend service
-        continue-on-error: true
-        run: |
-          curl -s -X POST https://api.render.com/v1/services \
-            -H "Authorization: Bearer $RENDER_API_KEY" \
-            -H "Content-Type: application/json" \
-            -d @frontend.json || echo "Frontend may already exist."
-
+      # Trigger deploys
       - name: Trigger Backend Deploy
+        if: ${{ env.BACKEND_ID }} != '' && ${{ env.BACKEND_ID }} != 'null'
         run: |
-          BACK_ID=$(curl -s -H "Authorization: Bearer $RENDER_API_KEY" https://api.render.com/v1/services | jq -r '.[] | select(.service.name=="simplex-backend") | .service.id')
-          curl -s -X POST "https://api.render.com/v1/services/${BACK_ID}/deploys" \
+          curl -X POST "https://api.render.com/v1/services/$BACKEND_ID/deploys" \
             -H "Authorization: Bearer $RENDER_API_KEY" \
             -H "Content-Type: application/json" \
-            -d '{"clearCache":false}' | jq -C .
+            -d '{"clearCache": true}'
 
       - name: Trigger Frontend Deploy
+        if: ${{ env.FRONTEND_ID }} != '' && ${{ env.FRONTEND_ID }} != 'null'
         run: |
-          FRONT_ID=$(curl -s -H "Authorization: Bearer $RENDER_API_KEY" https://api.render.com/v1/services | jq -r '.[] | select(.service.name=="simplex-frontend") | .service.id')
-          curl -s -X POST "https://api.render.com/v1/services/${FRONT_ID}/deploys" \
+          curl -X POST "https://api.render.com/v1/services/$FRONTEND_ID/deploys" \
             -H "Authorization: Bearer $RENDER_API_KEY" \
             -H "Content-Type: application/json" \
-            -d '{"clearCache":false}' | jq -C .
+            -d '{"clearCache": true}'
+
+      # - name: Define JSON for Backend service
+      # run: |
+      #   cat > backend.json <<EOF
+      #   {
+      #     "serviceDetails": {
+      #       "name": "${{ env.BACKEND_SERVICE }}",
+      #       "type": "web_service",
+      #       "runtime": "docker",
+      #       "repo": "${{ github.repository }}",
+      #       "region": "${{ env.REGION }}",
+      #       "plan": "${{ env.PLAN }}",
+      #       "dockerCommand": "",
+      #       "envVars": [],
+      #       "rootDir": "/",
+      #       "dockerImage": "${{ env.BACKEND_IMAGE }}:${{ env.VERSION }}",
+      #       "autoDeploy": false,
+      #       "numInstances": 1,
+      #       "disk": { "name": "data", "mountPath": "/data", "sizeGB": 1 },
+      #       "port": 8000
+      #     }
+      #   }
+      #   EOF
+
+      # - name: Define JSON for Frontend service
+      #   run: |
+      #     cat > frontend.json <<EOF
+      #     {
+      #       "serviceDetails": {
+      #         "name": "${{ env.FRONTEND_SERVICE }}",
+      #         "type": "web_service",
+      #         "runtime": "docker",
+      #         "repo": "${{ github.repository }}",
+      #         "region": "${{ env.REGION }}",
+      #         "plan": "${{ env.PLAN }}",
+      #         "dockerCommand": "",
+      #         "rootDir": "/",
+      #         "dockerImage": "${{ env.FRONTEND_IMAGE }}:${{ env.VERSION }}",
+      #         "autoDeploy": false,
+      #         "numInstances": 1,
+      #         "envVars": [
+      #           { "key": "BACKEND_URL", "value": "https://${{ env.BACKEND_SERVICE }}.onrender.com" }
+      #         ],
+      #         "port": 80
+      #       }
+      #     }
+      #     EOF
+
+      # # - name: Try to create Backend service
+      # #   continue-on-error: true
+      # #   run: |
+      # #     curl -s -X POST https://api.render.com/v1/services \
+      # #       -H "Authorization: Bearer $RENDER_API_KEY" \
+      # #       -H "Content-Type: application/json" \
+      # #       -d @backend.json || echo "Backend may already exist."
+
+      # # - name: Try to create Frontend service
+      # #   continue-on-error: true
+      # #   run: |
+      # #     curl -s -X POST https://api.render.com/v1/services \
+      # #       -H "Authorization: Bearer $RENDER_API_KEY" \
+      # #       -H "Content-Type: application/json" \
+      # #       -d @frontend.json || echo "Frontend may already exist."
+
+      # - name: Trigger Backend Deploy
+      #   run: |
+      #     BACK_ID=$(curl -s -H "Authorization: Bearer $RENDER_API_KEY" https://api.render.com/v1/services | jq -r '.[] | select(.service.name=="simplex-backend") | .service.id')
+      #     curl -s -X POST "https://api.render.com/v1/services/${BACK_ID}/deploys" \
+      #       -H "Authorization: Bearer $RENDER_API_KEY" \
+      #       -H "Content-Type: application/json" \
+      #       -d '{"clearCache":false}' | jq -C .
+
+      # - name: Trigger Frontend Deploy
+      #   run: |
+      #     FRONT_ID=$(curl -s -H "Authorization: Bearer $RENDER_API_KEY" https://api.render.com/v1/services | jq -r '.[] | select(.service.name=="simplex-frontend") | .service.id')
+      #     curl -s -X POST "https://api.render.com/v1/services/${FRONT_ID}/deploys" \
+      #       -H "Authorization: Bearer $RENDER_API_KEY" \
+      #       -H "Content-Type: application/json" \
+      #       -d '{"clearCache":false}' | jq -C .
 
   # =========================================================
   # 5️. DISCORD NOTIFICATION
@@ -214,31 +316,44 @@ jobs:
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
         run: |
-          sudo apt-get update && sudo apt-get install -y jq
-          STATUS="${{ job.status }}"
-          REPO="${{ github.repository }}"
-          URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          VERSION="${{ env.VERSION}}"
-      
-          if [ "$STATUS" = "success" ]; then
+          # Determinar el estado general del workflow
+          if [ "${{ needs.codeql.result }}" = "success" ] && \
+            [ "${{ needs.backend-tests.result }}" = "success" ] && \
+            [ "${{ needs.build-and-push.result }}" = "success" ] && \
+            [ "${{ needs.deploy-render.result }}" = "success" ]; then
+            STATUS="success"
             COLOR=3066993
             TITLE="✅ CI/CD Success"
+            DESCRIPTION="All jobs completed successfully"
           else
+            STATUS="failure"
             COLOR=15158332
             TITLE="❌ CI/CD Failed"
+            DESCRIPTION="One or more jobs failed"
           fi
-      
-          PAYLOAD=$(jq -n \
-            --arg title "$TITLE" \
-            --arg repo "$REPO" \
-            --arg url "$URL" \
-            --arg version "$VERSION" \
-            --argjson color "$COLOR" \
-            '{embeds:[{title:$title, description:"Repo: **\($repo)**\nVersion: **\($version)**", url:$url, color:$color}]}')
-      
-          echo "Sending payload:"
-          echo "$PAYLOAD"
-      
-          curl -v -H "Content-Type: application/json" \
-               -d "$PAYLOAD" \
-               "$DISCORD_WEBHOOK"
+          REPO="${{ github.repository }}"
+          URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          VERSION="${{ env.VERSION }}"
+
+          PAYLOAD=$(cat <<EOF
+          {
+            "embeds": [{
+              "title": "$TITLE",
+              "description": "$DESCRIPTION\n**Repo:** $REPO\n**Version:** $VERSION\n**Workflow:** ${{ github.workflow }}",
+              "url": "$URL",
+              "color": $COLOR,
+              "timestamp": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+              "fields": [
+                {"name": "CodeQL", "value": "${{ needs.codeql.result }}", "inline": true},
+                {"name": "Backend Tests", "value": "${{ needs.backend-tests.result }}", "inline": true},
+                {"name": "Build & Push", "value": "${{ needs.build-and-push.result }}", "inline": true},
+                {"name": "Deploy to Render", "value": "${{ needs.deploy-render.result }}", "inline": true}
+              ]
+            }]
+          }
+          EOF
+          )
+
+          curl -H "Content-Type: application/json" \
+              -d "$PAYLOAD" \
+              "$DISCORD_WEBHOOK"
