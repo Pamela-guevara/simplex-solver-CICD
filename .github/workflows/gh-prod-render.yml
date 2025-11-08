@@ -141,26 +141,39 @@ jobs:
         run: |
           if [ -z "$BACKEND_ID" ]; then
             echo "🆕 Creating new backend service..."
-            cat > backend.json <<EOF
-            {
+            # Crear el JSON usando jq (más limpio y evita problemas de sintaxis)
+            jq -n \
+              --arg name "${{ env.BACKEND_SERVICE }}" \
+              --arg ownerId "${{ secrets.OWNER_ID }}" \
+              --arg arg image "${{ env.BACKEND_IMAGE }}:${{ env.VERSION }}" \
+              --arg regionId "render-${{ env.REGION }}" \
+              --arg username "${{ secrets.GH_USERNAME }}" \
+              --arg password "${{ secrets.GHCR_PAT }}" \
+              '{
               "autoDeploy": false,
               "branch": null,
-              "name": "${{ env.BACKEND_SERVICE }}",
-              "ownerId": "${{ secrets.OWNER_ID }}",
-              "repo": "https://github.com/${{ github.repository }}",
+              "name": $name,
+              "ownerId": $ownerId,
+              "image": {
+                "url": $image
+              },
               "type": "web_service",
               "runtime": "docker",
-              "dockerImage": "${{ env.BACKEND_IMAGE }}:${{ env.VERSION }}",
+              # "dockerImage": "${{ env.BACKEND_IMAGE }}:${{ env.VERSION }}",
               # "dockerContext": "./backend",
               # "dockerfilePath": "./backend/Dockerfile",
               "plan": "${{ env.PLAN }}",
-              "regionId": "render-${{ env.REGION }}",
+              "regionId": $regionId,
               "envVars": [],
               "numInstances": 1,
+              "registryCredential": {
+              "server": "ghcr.io",
+              "username": $username,
+              "password": $password
+              },
               "disk": { "name": "data", "mountPath": "/data", "sizeGB": 0.5 },
               "port": 8000
-            }
-            EOF
+            }' > backend.json
             
             curl -X POST "https://api.render.com/v1/services" \
               -H "Authorization: Bearer $RENDER_API_KEY" \
@@ -174,30 +187,44 @@ jobs:
         run: |
           if [ -z "$FRONTEND_ID" ]; then
             echo "🆕 Creating new frontend service..."
-            cat > frontend.json <<EOF
-            {
+            jq -n \
+              --arg name "${{ env.FRONTEND_SERVICE }}" \
+              --arg ownerId "${{ secrets.OWNER_ID }}" \
+              --arg image "${{ env.FRONTEND_IMAGE }}:${{ env.VERSION }}" \
+              --arg regionId "render-${{ env.REGION }}" \
+              --arg backendUrl "https://${{ env.BACKEND_SERVICE }}.onrender.com" \
+              --arg backendUrl "https://${{ env.BACKEND_SERVICE }}.onrender.com" \
+              --arg username "${{ secrets.GH_USERNAME }}" \
+              --arg password "${{ secrets.GHCR_PAT }}" \
+              '{
               "autoDeploy": false,
               "branch": null,
               "name": "${{ env.FRONTEND_SERVICE }}",
-              "ownerId": "${{ secrets.OWNER_ID }}",
+              "ownerId": $ownerId,
               "repo": "https://github.com/${{ github.repository }}",
               "type": "web_service",
               "runtime": "docker",
-              "dockerImage": "${{ env.FRONTEND_IMAGE }}:${{ env.VERSION }}",
+              "image": {
+                "url": $image
+              },
               # "dockerContext": "./frontend",
               # "dockerfilePath": "./frontend/Dockerfile",
               "plan": ${{ env.PLAN }},
-              "regionId": "render-${{ env.REGION }}",
+              "regionId": $regionId,
               "envVars": [
                 {
                   "key": "BACKEND_URL",
-                  "value": "https://${{ env.BACKEND_SERVICE }}.onrender.com"
+                  "value": $backendUrl
                 }
               ],
+              "registryCredential": {
+                "server": "ghcr.io",
+                "username": $username,
+                "password": $password
+              },
               "port": 80,
               "numInstances": 1
-            }
-            EOF
+            }' > frontend.json
             
             curl -X POST "https://api.render.com/v1/services" \
               -H "Authorization: Bearer $RENDER_API_KEY" \
