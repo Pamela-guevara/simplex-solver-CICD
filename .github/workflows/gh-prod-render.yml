@@ -141,11 +141,11 @@ jobs:
         run: |
           if [ -z "$BACKEND_ID" ]; then
             echo "🆕 Creating new backend service..."
-            # Crear el JSON usando jq (más limpio y evita problemas de sintaxis)
+            IMAGE_BE_URL="${{ env.BACKEND_IMAGE }}:${{ env.VERSION }}"
             jq -n \
               --arg name "${{ env.BACKEND_SERVICE }}" \
               --arg ownerId "${{ secrets.OWNER_ID }}" \
-              --arg arg image "${{ env.BACKEND_IMAGE }}:${{ env.VERSION }}" \
+              --arg arg image "$IMAGE_BE_URL" \
               --arg regionId "render-${{ env.REGION }}" \
               --arg username "${{ secrets.GH_USERNAME }}" \
               --arg password "${{ secrets.GHCR_PAT }}" \
@@ -187,10 +187,11 @@ jobs:
         run: |
           if [ -z "$FRONTEND_ID" ]; then
             echo "🆕 Creating new frontend service..."
+            IMAGE_FE_URL="${{ env.FRONTEND_IMAGE }}:${{ env.VERSION }}"
             jq -n \
               --arg name "${{ env.FRONTEND_SERVICE }}" \
               --arg ownerId "${{ secrets.OWNER_ID }}" \
-              --arg image "${{ env.FRONTEND_IMAGE }}:${{ env.VERSION }}" \
+              --arg image "$IMAGE_FE_URL" \
               --arg regionId "render-${{ env.REGION }}" \
               --arg backendUrl "https://${{ env.BACKEND_SERVICE }}.onrender.com" \
               --arg backendUrl "https://${{ env.BACKEND_SERVICE }}.onrender.com" \
