@@ -150,7 +150,6 @@ jobs:
               --arg regionId "${{ env.REGION }}" \
               --arg username "${{ secrets.GH_USERNAME }}" \
               --arg password "${{ secrets.GHCR_PAT }}" \
-              --arg plan "${{ env.PLAN }}" \
               '{
               "autoDeploy": false,
               "branch": null,
@@ -161,7 +160,6 @@ jobs:
               },
               "type": "web_service",
               "runtime": "docker",
-              "plan": $plan,
               "region": $regionId,
               "envVars": [],
               "numInstances": 1,
@@ -169,9 +167,7 @@ jobs:
                 "server": "ghcr.io",
                 "username": $username,
                 "password": $password
-                },
-              "disk": { "name": "data", "mountPath": "/data", "sizeGB": 0.5 },
-              "port": 8000
+                }
             }' > backend.json
 
             cat backend.json | jq empty
@@ -197,7 +193,6 @@ jobs:
               --arg backendUrl "https://${{ env.BACKEND_SERVICE }}.onrender.com" \
               --arg username "${{ secrets.GH_USERNAME }}" \
               --arg password "${{ secrets.GHCR_PAT }}" \
-              --arg plan "${{ env.PLAN }}" \
               '{
               "autoDeploy": false,
               "branch": null,
@@ -208,7 +203,6 @@ jobs:
               "image": {
                 "url": $image
               },
-              "plan": $plan,
               "region": $regionId,
               "envVars": [
                 {
@@ -221,8 +215,7 @@ jobs:
                 "username": $username,
                 "password": $password
               },
-              "port": 80,
-              "numInstances": 1
+            
             }' > frontend.json
             
             cat frontend.json | jq empty
@@ -237,20 +230,20 @@ jobs:
 
       # Trigger deploys
       - name: Trigger Backend Deploy
-        if: ${{ env.BACKEND_ID }} != '' && ${{ env.BACKEND_ID }} != 'null'
+        if: env.BACKEND_ID != '' && env.BACKEND_ID != 'null'
         run: |
           curl -X POST "https://api.render.com/v1/services/$BACKEND_ID/deploys" \
             -H "Authorization: Bearer $RENDER_API_KEY" \
             -H "Content-Type: application/json" \
-            -d "{\"clearCache\": true}"
+            -d "{"clearCache": true}"
 
       - name: Trigger Frontend Deploy
-        if: ${{ env.FRONTEND_ID }} != '' && ${{ env.FRONTEND_ID }} != 'null'
+        if: env.FRONTEND_ID != '' && env.FRONTEND_ID != 'null'
         run: |
           curl -X POST "https://api.render.com/v1/services/$FRONTEND_ID/deploys" \
             -H "Authorization: Bearer $RENDER_API_KEY" \
             -H "Content-Type: application/json" \
-            -d "{\"clearCache\": true}"
+            -d "{"clearCache": true}"
 
       # - name: Define JSON for Backend service
       # run: |
