@@ -161,11 +161,8 @@ jobs:
               },
               "type": "web_service",
               "runtime": "docker",
-              # "dockerImage": "${{ env.BACKEND_IMAGE }}:${{ env.VERSION }}",
-              # "dockerContext": "./backend",
-              # "dockerfilePath": "./backend/Dockerfile",
               "plan": $plan,
-              "regionId": $regionId,
+              "region": $regionId,
               "envVars": [],
               "numInstances": 1,
               "registryCredential": {
@@ -176,6 +173,8 @@ jobs:
               "disk": { "name": "data", "mountPath": "/data", "sizeGB": 0.5 },
               "port": 8000
             }' > backend.json
+
+            cat backend.json | jq empty
             
             curl -X POST "https://api.render.com/v1/services" \
               -H "Authorization: Bearer $RENDER_API_KEY" \
@@ -196,7 +195,6 @@ jobs:
               --arg image "$IMAGE_FE_URL" \
               --arg regionId "${{ env.REGION }}" \
               --arg backendUrl "https://${{ env.BACKEND_SERVICE }}.onrender.com" \
-              --arg backendUrl "https://${{ env.BACKEND_SERVICE }}.onrender.com" \
               --arg username "${{ secrets.GH_USERNAME }}" \
               --arg password "${{ secrets.GHCR_PAT }}" \
               --arg plan "${{ env.PLAN }}" \
@@ -205,16 +203,13 @@ jobs:
               "branch": null,
               "name": $name,
               "ownerId": $ownerId,
-              # "repo": "https://github.com/${{ github.repository }}",
               "type": "web_service",
               "runtime": "docker",
               "image": {
                 "url": $image
               },
-              # "dockerContext": "./frontend",
-              # "dockerfilePath": "./frontend/Dockerfile",
               "plan": $plan,
-              "regionId": $regionId,
+              "region": $regionId,
               "envVars": [
                 {
                   "key": "BACKEND_URL",
@@ -229,6 +224,8 @@ jobs:
               "port": 80,
               "numInstances": 1
             }' > frontend.json
+            
+            cat frontend.json | jq empty
             
             curl -X POST "https://api.render.com/v1/services" \
               -H "Authorization: Bearer $RENDER_API_KEY" \
@@ -245,7 +242,7 @@ jobs:
           curl -X POST "https://api.render.com/v1/services/$BACKEND_ID/deploys" \
             -H "Authorization: Bearer $RENDER_API_KEY" \
             -H "Content-Type: application/json" \
-            -d '{"clearCache": true}'
+            -d "{\"clearCache\": true}"
 
       - name: Trigger Frontend Deploy
         if: ${{ env.FRONTEND_ID }} != '' && ${{ env.FRONTEND_ID }} != 'null'
@@ -253,7 +250,7 @@ jobs:
           curl -X POST "https://api.render.com/v1/services/$FRONTEND_ID/deploys" \
             -H "Authorization: Bearer $RENDER_API_KEY" \
             -H "Content-Type: application/json" \
-            -d '{"clearCache": true}'
+            -d "{\"clearCache\": true}"
 
       # - name: Define JSON for Backend service
       # run: |
