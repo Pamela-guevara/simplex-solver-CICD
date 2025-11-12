@@ -13,6 +13,8 @@ services:
   frontend:
     build:
       context: ./frontend
+      args:
+        NGINX_CONF: nginx.conf
     container_name: simplex_frontend
     ports:
       - "80:80"

@@ -13,10 +13,29 @@ function validatePositiveInteger(value) {
   return isNaN(num) || num <= 0 ? 1 : num
 }
 
-// Helper function to validate numeric input (can be negative)
+// Helper function to validate numeric input (can be negative and floats)
 function validateNumeric(value) {
   // Allow digits, minus sign, and decimal point
-  const cleaned = value.replace(/[^0-9.-]/g, '')
+  // Handle multiple decimal points by keeping only the first one
+  let cleaned = value.replace(/[^0-9.-]/g, '')
+  
+  // Ensure only one decimal point
+  const parts = cleaned.split('.')
+  if (parts.length > 2) {
+    cleaned = parts[0] + '.' + parts.slice(1).join('')
+  }
+  
+  // Handle minus sign - only allow at the beginning
+  if (cleaned.includes('-')) {
+    const minusCount = (cleaned.match(/-/g) || []).length
+    if (minusCount > 1 || cleaned.indexOf('-') !== 0) {
+      cleaned = cleaned.replace(/-/g, '')
+      if (cleaned && !cleaned.startsWith('-')) {
+        cleaned = '-' + cleaned
+      }
+    }
+  }
+  
   const num = parseFloat(cleaned)
   return isNaN(num) ? 0 : num
 }
@@ -260,13 +279,23 @@ export function LPForm({ onSolved }) {
                     setCoefs((prev) => prev.map((v, idx) => (idx === j ? validatedValue : v)))
                   }}
                   onKeyDown={(e) => {
-                // Allow: backspace, delete, tab, escape, enter, minus, period
+                // Allow: backspace, delete, tab, escape, enter, minus, period (decimal point)
                 if ([8, 9, 27, 13, 46, 189, 109, 190, 110].indexOf(e.keyCode) !== -1 ||
                     // Allow: Ctrl+A, Ctrl+C, Ctrl+V, Ctrl+X
                     (e.keyCode === 65 && e.ctrlKey === true) ||
                     (e.keyCode === 67 && e.ctrlKey === true) ||
                     (e.keyCode === 86 && e.ctrlKey === true) ||
                     (e.keyCode === 88 && e.ctrlKey === true)) {
+                  // Additional check for decimal point: only allow if not already present
+                  if ((e.keyCode === 190 || e.keyCode === 110) && e.target.value.includes('.')) {
+                    e.preventDefault();
+                    return;
+                  }
+                  // Additional check for minus: only allow at the beginning
+                  if ((e.keyCode === 189 || e.keyCode === 109) && e.target.selectionStart !== 0) {
+                    e.preventDefault();
+                    return;
+                  }
                   return;
                 }
                 // Ensure that it is a number and stop the keypress
@@ -330,13 +359,23 @@ export function LPForm({ onSolved }) {
                       } : c))
                     }}
                     onKeyDown={(e) => {
-                // Allow: backspace, delete, tab, escape, enter, minus, period
+                // Allow: backspace, delete, tab, escape, enter, minus, period (decimal point)
                 if ([8, 9, 27, 13, 46, 189, 109, 190, 110].indexOf(e.keyCode) !== -1 ||
                     // Allow: Ctrl+A, Ctrl+C, Ctrl+V, Ctrl+X
                     (e.keyCode === 65 && e.ctrlKey === true) ||
                     (e.keyCode === 67 && e.ctrlKey === true) ||
                     (e.keyCode === 86 && e.ctrlKey === true) ||
                     (e.keyCode === 88 && e.ctrlKey === true)) {
+                  // Additional check for decimal point: only allow if not already present
+                  if ((e.keyCode === 190 || e.keyCode === 110) && e.target.value.includes('.')) {
+                    e.preventDefault();
+                    return;
+                  }
+                  // Additional check for minus: only allow at the beginning
+                  if ((e.keyCode === 189 || e.keyCode === 109) && e.target.selectionStart !== 0) {
+                    e.preventDefault();
+                    return;
+                  }
                   return;
                 }
                 // Ensure that it is a number and stop the keypress

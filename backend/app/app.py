@@ -9,7 +9,12 @@ def create_app() -> FastAPI:
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "*"], # Ruta desde donde deberá arrancar el frontend
+        allow_origins=[
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "https://simplex-frontend.fly.dev",
+            "https://simplex-frontend.fly.dev/",
+        ],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -20,6 +25,10 @@ def create_app() -> FastAPI:
     @app.get("/")
     async def root():
         return {"status": "ok", "service": "simplex"}
+
+    @app.get("/health")
+    async def health():
+        return {"status": "healthy", "service": "simplex-backend"}
 
     return app
 
