@@ -1,9 +1,9 @@
 name: CI · Build · CodeQL · GHCR · Render · Discord
 
 on:
-  push:
-    branches: ["main", "master"]
-  #workflow_dispatch:
+  #push:
+  #  branches: ["main", "master"]
+  workflow_dispatch:
 
 env:
   VERSION: v1.0.${{ github.run_number }}
