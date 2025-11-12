@@ -120,163 +120,108 @@ jobs:
         id: get-services
         run: |
           echo "🔍 Fetching existing services..."
-
           SERVICES_JSON=$(curl -s -H "Authorization: Bearer $RENDER_API_KEY" \
             "https://api.render.com/v1/services?limit=20")
 
-          echo "Services Response:"
-          echo "$SERVICES_JSON" | jq '.' || echo "$SERVICES_JSON"
-
-          # Buscar servicios por nombre
           BACKEND_ID=$(echo "$SERVICES_JSON" | jq -r '.[] | select(.service.name=="${{ env.BACKEND_SERVICE }}") | .service.id' | head -n1)
           FRONTEND_ID=$(echo "$SERVICES_JSON" | jq -r '.[] | select(.service.name=="${{ env.FRONTEND_SERVICE }}") | .service.id' | head -n1)
 
-          # Exportar como variables de ambiente
           echo "BACKEND_ID=${BACKEND_ID}" >> $GITHUB_ENV
           echo "FRONTEND_ID=${FRONTEND_ID}" >> $GITHUB_ENV
-
           echo "✅ Backend ID: ${BACKEND_ID:-not found}"
           echo "✅ Frontend ID: ${FRONTEND_ID:-not found}"
 
       - name: Create Backend Service (if not exists)
         if: env.BACKEND_ID == '' || env.BACKEND_ID == 'null'
         run: |
-          echo "🆕 Creating new backend service..."
-
-          IMAGE_URL="${{ env.BACKEND_IMAGE }}:latest"
-
-          # Crear JSON usando heredoc para evitar problemas de escape
-          cat > backend_payload.json <<EOF
+          IMAGE_URL="${{ env.BACKEND_IMAGE }}:${{ env.VERSION }}"
+          cat > backend.json <<EOF
           {
             "type": "web_service",
             "name": "${{ env.BACKEND_SERVICE }}",
             "ownerId": "${{ secrets.OWNER_ID }}",
-            "repo": "https://github.com/${{ github.repository }}",
-            "autoDeploy": "no",
-            "serviceDetails": {
-              "env": "image",
-              "envSpecificDetails": {
-                "imageUrl": "${IMAGE_URL}",
-                "registryCredential": {
-                  "username": "${{ secrets.GH_USERNAME }}",
-                  "password": "${{ secrets.GHCR_PAT }}"
-                }
-              },
-              "region": "${{ env.REGION }}",
-              "plan": "starter",
-              "pullRequestPreviewsEnabled": "no"
+            "runtime": "image",
+            "image": "${IMAGE_URL}",
+            "region": "${{ env.REGION }}",
+            "plan": "${{ env.PLAN }}",
+            "autoDeploy": false,
+            "numInstances": 1,
+            "envVars": [],
+            "registryCredential": {
+              "server": "ghcr.io",
+              "username": "${{ secrets.GH_USERNAME }}",
+              "password": "${{ secrets.GHCR_PAT }}"
             }
           }
           EOF
 
-          echo "📄 Backend JSON payload:"
-          cat backend_payload.json | jq '.'
-
-          # Hacer la petición con mejor manejo de errores
           RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
             -X POST "https://api.render.com/v1/services" \
             -H "Authorization: Bearer $RENDER_API_KEY" \
             -H "Content-Type: application/json" \
-            -d @backend_payload.json)
+            -d @backend.json)
 
           HTTP_CODE=$(echo "$RESPONSE" | grep "HTTP_STATUS:" | cut -d':' -f2)
           BODY=$(echo "$RESPONSE" | sed '/HTTP_STATUS:/d')
+          echo "$BODY" | jq '.' || echo "$BODY"
 
-          echo "📊 HTTP Status: $HTTP_CODE"
-          echo "📄 Response Body:"
-          echo "$BODY" | jq '.' 2>/dev/null || echo "$BODY"
-
-          # Validar respuesta
           if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
             BACKEND_ID=$(echo "$BODY" | jq -r '.service.id // .id')
-            echo "✅ Backend service created successfully!"
             echo "BACKEND_ID=$BACKEND_ID" >> $GITHUB_ENV
           else
-            echo "❌ Failed to create backend service (HTTP $HTTP_CODE)"
-            echo "Error details: $BODY"
             exit 1
           fi
 
       - name: Create Frontend Service (if not exists)
         if: env.FRONTEND_ID == '' || env.FRONTEND_ID == 'null'
         run: |
-          echo "🆕 Creating new frontend service..."
-
-          IMAGE_URL="${{ env.FRONTEND_IMAGE }}:latest"
-
-          # Crear JSON para frontend
-          cat > frontend_payload.json <<EOF
+          IMAGE_URL="${{ env.FRONTEND_IMAGE }}:${{ env.VERSION }}"
+          cat > frontend.json <<EOF
           {
             "type": "web_service",
             "name": "${{ env.FRONTEND_SERVICE }}",
             "ownerId": "${{ secrets.OWNER_ID }}",
-            "repo": "https://github.com/${{ github.repository }}",
-            "autoDeploy": "no",
-            "serviceDetails": {
-              "env": "image",
-              "envSpecificDetails": {
-                "imageUrl": "${IMAGE_URL}",
-                "registryCredential": {
-                  "username": "${{ secrets.GH_USERNAME }}",
-                  "password": "${{ secrets.GHCR_PAT }}"
-                }
-              },
-              "region": "${{ env.REGION }}",
-              "plan": "starter",
-              "pullRequestPreviewsEnabled": "no"
-            },
+            "runtime": "image",
+            "image": "${IMAGE_URL}",
+            "region": "${{ env.REGION }}",
+            "plan": "${{ env.PLAN }}",
+            "autoDeploy": false,
+            "numInstances": 1,
             "envVars": [
-              {
-                "key": "BACKEND_URL",
-                "value": "https://${{ env.BACKEND_SERVICE }}.onrender.com"
-              }
-            ]
+              { "key": "BACKEND_URL", "value": "https://${{ env.BACKEND_SERVICE }}.onrender.com" }
+            ],
+            "registryCredential": {
+              "server": "ghcr.io",
+              "username": "${{ secrets.GH_USERNAME }}",
+              "password": "${{ secrets.GHCR_PAT }}"
+            }
           }
           EOF
 
-          echo "📄 Frontend JSON payload:"
-          cat frontend_payload.json | jq '.'
-
-          # Hacer la petición
           RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
             -X POST "https://api.render.com/v1/services" \
             -H "Authorization: Bearer $RENDER_API_KEY" \
             -H "Content-Type: application/json" \
-            -d @frontend_payload.json)
+            -d @frontend.json)
 
           HTTP_CODE=$(echo "$RESPONSE" | grep "HTTP_STATUS:" | cut -d':' -f2)
           BODY=$(echo "$RESPONSE" | sed '/HTTP_STATUS:/d')
+          echo "$BODY" | jq '.' || echo "$BODY"
 
-          echo "📊 HTTP Status: $HTTP_CODE"
-          echo "📄 Response Body:"
-          echo "$BODY" | jq '.' 2>/dev/null || echo "$BODY"
-
-          # Validar respuesta
           if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
             FRONTEND_ID=$(echo "$BODY" | jq -r '.service.id // .id')
-            echo "✅ Frontend service created successfully!"
             echo "FRONTEND_ID=$FRONTEND_ID" >> $GITHUB_ENV
           else
-            echo "❌ Failed to create frontend service (HTTP $HTTP_CODE)"
-            echo "Error details: $BODY"
             exit 1
           fi
 
       - name: Update Backend Service (if exists)
         if: env.BACKEND_ID != '' && env.BACKEND_ID != 'null'
         run: |
-          echo "🔄 Updating existing backend service: $BACKEND_ID"
-
-          IMAGE_URL="${{ env.BACKEND_IMAGE }}:latest"
-
-          # Actualizar la imagen del servicio
+          IMAGE_URL="${{ env.BACKEND_IMAGE }}:${{ env.VERSION }}"
           cat > update_backend.json <<EOF
           {
-            "serviceDetails": {
-              "envSpecificDetails": {
-                "imageUrl": "${IMAGE_URL}"
-              }
-            }
+            "image": "${IMAGE_URL}"
           }
           EOF
 
@@ -288,18 +233,10 @@ jobs:
       - name: Update Frontend Service (if exists)
         if: env.FRONTEND_ID != '' && env.FRONTEND_ID != 'null'
         run: |
-          echo "🔄 Updating existing frontend service: $FRONTEND_ID"
-
-          IMAGE_URL="${{ env.FRONTEND_IMAGE }}:latest"
-
-          # Actualizar la imagen del servicio
+          IMAGE_URL="${{ env.FRONTEND_IMAGE }}:${{ env.VERSION }}"
           cat > update_frontend.json <<EOF
           {
-            "serviceDetails": {
-              "envSpecificDetails": {
-                "imageUrl": "${IMAGE_URL}"
-              }
-            }
+            "image": "${IMAGE_URL}"
           }
           EOF
 
@@ -311,36 +248,18 @@ jobs:
       - name: Trigger Backend Deploy
         if: env.BACKEND_ID != '' && env.BACKEND_ID != 'null'
         run: |
-          echo "🚀 Deploying backend service..."
-
-          RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
-            -X POST "https://api.render.com/v1/services/$BACKEND_ID/deploys" \
+          curl -s -X POST "https://api.render.com/v1/services/$BACKEND_ID/deploys" \
             -H "Authorization: Bearer $RENDER_API_KEY" \
             -H "Content-Type: application/json" \
-            -d '{"clearCache": "clear"}')
-
-          HTTP_CODE=$(echo "$RESPONSE" | grep "HTTP_STATUS:" | cut -d':' -f2)
-          BODY=$(echo "$RESPONSE" | sed '/HTTP_STATUS:/d')
-
-          echo "📊 HTTP Status: $HTTP_CODE"
-          echo "$BODY" | jq '.' 2>/dev/null || echo "$BODY"
+            -d '{"clearCache": true}' | jq '.'
 
       - name: Trigger Frontend Deploy
         if: env.FRONTEND_ID != '' && env.FRONTEND_ID != 'null'
         run: |
-          echo "🚀 Deploying frontend service..."
-
-          RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
-            -X POST "https://api.render.com/v1/services/$FRONTEND_ID/deploys" \
+          curl -s -X POST "https://api.render.com/v1/services/$FRONTEND_ID/deploys" \
             -H "Authorization: Bearer $RENDER_API_KEY" \
             -H "Content-Type: application/json" \
-            -d '{"clearCache": "clear"}')
-
-          HTTP_CODE=$(echo "$RESPONSE" | grep "HTTP_STATUS:" | cut -d':' -f2)
-          BODY=$(echo "$RESPONSE" | sed '/HTTP_STATUS:/d')
-
-          echo "📊 HTTP Status: $HTTP_CODE"
-          echo "$BODY" | jq '.' 2>/dev/null || echo "$BODY"
+            -d '{"clearCache": true}' | jq '.'
 
   # =========================================================
   # 5️⃣ DISCORD NOTIFICATION
