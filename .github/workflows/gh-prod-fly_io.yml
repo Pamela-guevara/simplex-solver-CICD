@@ -178,7 +178,7 @@ jobs:
                 {"name": "CodeQL", "value": "${{ needs.codeql.result }}", "inline": true},
                 {"name": "Backend Tests", "value": "${{ needs.backend-tests.result }}", "inline": true},
                 {"name": "Build & Push", "value": "${{ needs.build-and-push.result }}", "inline": true},
-                {"name": "Deploy to Render", "value": "${{ needs.deploy-render.result }}", "inline": true}
+                {"name": "Deploy to Render", "value": "${{ needs.deploy-flyio.result }}", "inline": true}
               ]
             }]
           }
