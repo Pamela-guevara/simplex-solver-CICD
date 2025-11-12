@@ -1,0 +1,378 @@
+name: CI · Build · CodeQL · GHCR · Render · Discord
+
+on:
+  push:
+    branches: ["main", "master"]
+  #workflow_dispatch:
+
+env:
+  VERSION: v1.0.${{ github.run_number }}
+  GHCR_OWNER: ${{ secrets.GH_USERNAME }}
+  BACKEND_IMAGE: ghcr.io/${{ secrets.GH_USERNAME }}/simplex-solver-backend
+  FRONTEND_IMAGE: ghcr.io/${{ secrets.GH_USERNAME }}/simplex-solver-frontend
+  RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+  BACKEND_SERVICE: simplex-backend
+  FRONTEND_SERVICE: simplex-frontend
+  REGION: oregon
+  PLAN: free
+
+permissions:
+  contents: read
+  packages: write
+  security-events: write
+  id-token: write
+
+jobs:
+  # =========================================================
+  # 1️⃣ CODEQL ANALYSIS
+  # =========================================================
+  codeql:
+    name: Static Analysis (CodeQL)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: python, javascript
+      - uses: github/codeql-action/autobuild@v3
+      - uses: github/codeql-action/analyze@v3
+
+  # =========================================================
+  # 2️⃣ BACKEND TESTS
+  # =========================================================
+  backend-tests:
+    name: Backend Unit Tests
+    runs-on: ubuntu-24.04
+    needs: codeql
+    defaults:
+      run:
+        shell: bash
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Run pytest
+        run: pytest -q
+      - name: Run manual test
+        run: python -m tests.test_manual
+
+  # =========================================================
+  # 3️⃣ BUILD & PUSH IMAGES
+  # =========================================================
+  build-and-push:
+    name: Build & Push Docker Images
+    runs-on: ubuntu-24.04
+    needs: backend-tests
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ secrets.GH_USERNAME }}
+          password: ${{ secrets.GHCR_PAT }}
+
+      - name: Setup Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # --- Build Backend ---
+      - name: Build & Push Backend Image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: true
+          tags: |
+            ${{ env.BACKEND_IMAGE }}:${{ env.VERSION }}
+            ${{ env.BACKEND_IMAGE }}:latest
+
+      # --- Build Frontend ---
+      - name: Build & Push Frontend Image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: true
+          tags: |
+            ${{ env.FRONTEND_IMAGE }}:${{ env.VERSION }}
+            ${{ env.FRONTEND_IMAGE }}:latest
+          build-args: |
+            NGINX_CONF=nginx_render.conf
+
+  # =========================================================
+  # 4️⃣ DEPLOY TO RENDER
+  # =========================================================
+  deploy-render:
+    name: Deploy to Render (Create/Update Services)
+    runs-on: ubuntu-24.04
+    needs: build-and-push
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create or Get Registry Credential
+        id: registry-cred
+        run: |
+          # Buscar credencial existente
+          CREDS=$(curl -s -H "Authorization: Bearer $RENDER_API_KEY" \
+            "https://api.render.com/v1/registry-credentials")
+
+          CRED_ID=$(echo "$CREDS" | jq -r '.[] | select(.registryCredential.name=="ghcr-simplex") | .registryCredential.id' | head -n1)
+
+          if [ -z "$CRED_ID" ] || [ "$CRED_ID" = "null" ]; then
+            echo "🔐 Creating new registry credential..."
+            
+            CRED_RESPONSE=$(curl -s -X POST "https://api.render.com/v1/registry-credentials" \
+              -H "Authorization: Bearer $RENDER_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d "{
+                \"name\": \"ghcr-simplex\",
+                \"username\": \"${{ secrets.GH_USERNAME }}\",
+                \"password\": \"${{ secrets.GHCR_PAT }}\",
+                \"registry\": \"ghcr.io\"
+              }")
+            
+            echo "Credential Response: $CRED_RESPONSE"
+            CRED_ID=$(echo "$CRED_RESPONSE" | jq -r '.id')
+            
+            if [ -z "$CRED_ID" ] || [ "$CRED_ID" = "null" ]; then
+              echo "❌ Failed to create registry credential"
+              exit 1
+            fi
+          fi
+
+          echo "REGISTRY_CRED_ID=$CRED_ID" >> $GITHUB_ENV
+          echo "✅ Registry Credential ID: $CRED_ID"
+
+      - name: Get existing services
+        id: get-services
+        run: |
+          SERVICES_JSON=$(curl -s -H "Authorization: Bearer $RENDER_API_KEY" \
+            "https://api.render.com/v1/services?limit=20")
+
+          echo "Services Response:"
+          echo "$SERVICES_JSON" | jq '.'
+
+          BACKEND_ID=$(echo "$SERVICES_JSON" | jq -r '.[] | select(.service.name=="${{ env.BACKEND_SERVICE }}") | .service.id' | head -n1)
+          FRONTEND_ID=$(echo "$SERVICES_JSON" | jq -r '.[] | select(.service.name=="${{ env.FRONTEND_SERVICE }}") | .service.id' | head -n1)
+
+          echo "BACKEND_ID=$BACKEND_ID" >> $GITHUB_ENV
+          echo "FRONTEND_ID=$FRONTEND_ID" >> $GITHUB_ENV
+          echo "Backend ID: $BACKEND_ID"
+          echo "Frontend ID: $FRONTEND_ID"
+
+      - name: Create or Update Backend Service
+        run: |
+          if [ -z "$BACKEND_ID" ] || [ "$BACKEND_ID" = "null" ]; then
+            echo "🆕 Creating new backend service..."
+            
+            IMAGE_PATH="${{ env.BACKEND_IMAGE }}:${{ env.VERSION }}"
+            
+            # JSON corregido según la API de Render
+            BACKEND_JSON=$(jq -n \
+              --arg name "${{ env.BACKEND_SERVICE }}" \
+              --arg ownerId "${{ secrets.OWNER_ID }}" \
+              --arg imagePath "$IMAGE_PATH" \
+              --arg credId "$REGISTRY_CRED_ID" \
+              --arg region "${{ env.REGION }}" \
+              '{
+                "type": "web_service",
+                "name": $name,
+                "ownerId": $ownerId,
+                "region": $region,
+                "plan": "free",
+                "runtime": "image",
+                "image": {
+                  "ownerId": $ownerId,
+                  "imagePath": $imagePath,
+                  "registryCredential": {
+                    "id": $credId
+                  }
+                },
+                "envVars": []
+              }')
+            
+            echo "Backend JSON:"
+            echo "$BACKEND_JSON" | jq '.'
+            
+            RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "https://api.render.com/v1/services" \
+              -H "Authorization: Bearer $RENDER_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d "$BACKEND_JSON")
+            
+            HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+            BODY=$(echo "$RESPONSE" | head -n-1)
+            
+            echo "HTTP Status: $HTTP_CODE"
+            echo "Response Body:"
+            echo "$BODY" | jq '.' || echo "$BODY"
+            
+            if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+              BACKEND_ID=$(echo "$BODY" | jq -r '.service.id')
+              echo "✅ Backend service created with ID: $BACKEND_ID"
+              echo "BACKEND_ID=$BACKEND_ID" >> $GITHUB_ENV
+            else
+              echo "❌ Failed to create backend service"
+              exit 1
+            fi
+          else
+            echo "📝 Backend service already exists with ID: $BACKEND_ID"
+          fi
+
+      - name: Create or Update Frontend Service
+        run: |
+          if [ -z "$FRONTEND_ID" ] || [ "$FRONTEND_ID" = "null" ]; then
+            echo "🆕 Creating new frontend service..."
+            
+            IMAGE_PATH="${{ env.FRONTEND_IMAGE }}:${{ env.VERSION }}"
+            
+            # JSON corregido para Frontend
+            FRONTEND_JSON=$(jq -n \
+              --arg name "${{ env.FRONTEND_SERVICE }}" \
+              --arg ownerId "${{ secrets.OWNER_ID }}" \
+              --arg imagePath "$IMAGE_PATH" \
+              --arg credId "$REGISTRY_CRED_ID" \
+              --arg region "${{ env.REGION }}" \
+              --arg backendUrl "https://${{ env.BACKEND_SERVICE }}.onrender.com" \
+              '{
+                "type": "web_service",
+                "name": $name,
+                "ownerId": $ownerId,
+                "region": $region,
+                "plan": "free",
+                "runtime": "image",
+                "image": {
+                  "ownerId": $ownerId,
+                  "imagePath": $imagePath,
+                  "registryCredential": {
+                    "id": $credId
+                  }
+                },
+                "envVars": [
+                  {
+                    "key": "BACKEND_URL",
+                    "value": $backendUrl
+                  }
+                ]
+              }')
+            
+            echo "Frontend JSON:"
+            echo "$FRONTEND_JSON" | jq '.'
+            
+            RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "https://api.render.com/v1/services" \
+              -H "Authorization: Bearer $RENDER_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d "$FRONTEND_JSON")
+            
+            HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+            BODY=$(echo "$RESPONSE" | head -n-1)
+            
+            echo "HTTP Status: $HTTP_CODE"
+            echo "Response Body:"
+            echo "$BODY" | jq '.' || echo "$BODY"
+            
+            if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+              FRONTEND_ID=$(echo "$BODY" | jq -r '.service.id')
+              echo "✅ Frontend service created with ID: $FRONTEND_ID"
+              echo "FRONTEND_ID=$FRONTEND_ID" >> $GITHUB_ENV
+            else
+              echo "❌ Failed to create frontend service"
+              exit 1
+            fi
+          else
+            echo "📝 Frontend service already exists with ID: $FRONTEND_ID"
+          fi
+
+      - name: Trigger Backend Deploy
+        if: env.BACKEND_ID != '' && env.BACKEND_ID != 'null'
+        run: |
+          echo "🚀 Triggering backend deployment..."
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+            "https://api.render.com/v1/services/$BACKEND_ID/deploys" \
+            -H "Authorization: Bearer $RENDER_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{"clearCache": "clear"}')
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | head -n-1)
+
+          echo "HTTP Status: $HTTP_CODE"
+          echo "$BODY" | jq '.' || echo "$BODY"
+
+      - name: Trigger Frontend Deploy
+        if: env.FRONTEND_ID != '' && env.FRONTEND_ID != 'null'
+        run: |
+          echo "🚀 Triggering frontend deployment..."
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+            "https://api.render.com/v1/services/$FRONTEND_ID/deploys" \
+            -H "Authorization: Bearer $RENDER_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{"clearCache": "clear"}')
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | head -n-1)
+
+          echo "HTTP Status: $HTTP_CODE"
+          echo "$BODY" | jq '.' || echo "$BODY"
+
+  # =========================================================
+  # 5️⃣ DISCORD NOTIFICATION
+  # =========================================================
+  notify:
+    name: Discord Notification
+    runs-on: ubuntu-24.04
+    needs: [deploy-render]
+    if: always()
+    steps:
+      - name: Send status to Discord
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: |
+          if [ "${{ needs.codeql.result }}" = "success" ] && \
+            [ "${{ needs.backend-tests.result }}" = "success" ] && \
+            [ "${{ needs.build-and-push.result }}" = "success" ] && \
+            [ "${{ needs.deploy-render.result }}" = "success" ]; then
+            STATUS="success"
+            COLOR=3066993
+            TITLE="✅ CI/CD Success"
+            DESCRIPTION="All jobs completed successfully"
+          else
+            STATUS="failure"
+            COLOR=15158332
+            TITLE="❌ CI/CD Failed"
+            DESCRIPTION="One or more jobs failed"
+          fi
+
+          REPO="${{ github.repository }}"
+          URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          VERSION="${{ env.VERSION }}"
+
+          PAYLOAD=$(cat <<EOF
+          {
+            "embeds": [{
+              "title": "$TITLE",
+              "description": "$DESCRIPTION\n**Repo:** $REPO\n**Version:** $VERSION\n**Workflow:** ${{ github.workflow }}",
+              "url": "$URL",
+              "color": $COLOR,
+              "timestamp": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+              "fields": [
+                {"name": "CodeQL", "value": "${{ needs.codeql.result }}", "inline": true},
+                {"name": "Backend Tests", "value": "${{ needs.backend-tests.result }}", "inline": true},
+                {"name": "Build & Push", "value": "${{ needs.build-and-push.result }}", "inline": true},
+                {"name": "Deploy to Render", "value": "${{ needs.deploy-render.result }}", "inline": true}
+              ]
+            }]
+          }
+          EOF
+          )
+
+          curl -H "Content-Type: application/json" \
+              -d "$PAYLOAD" \
+              "$DISCORD_WEBHOOK"
