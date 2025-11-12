@@ -6,14 +6,12 @@ on:
   #workflow_dispatch:
 
 env:
-  VERSION: v1.0.${{ github.run_number }}
+  VERSION: v1.1.${{ github.run_number }}
   GHCR_OWNER: ${{ secrets.GH_USERNAME }}
   BACKEND_IMAGE: ghcr.io/${{ secrets.GH_USERNAME }}/simplex-solver-backend
   FRONTEND_IMAGE: ghcr.io/${{ secrets.GH_USERNAME }}/simplex-solver-frontend
-  RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
   BACKEND_SERVICE: simplex-backend
   FRONTEND_SERVICE: simplex-frontend
-  REGION: oregon
 
 permissions:
   contents: read
@@ -90,7 +88,6 @@ jobs:
           push: true
           tags: |
             ${{ env.BACKEND_IMAGE }}:${{ env.VERSION }}
-            ${{ env.BACKEND_IMAGE }}:latest
 
       # --- Build Frontend ---
       - name: Build & Push Frontend Image
@@ -101,7 +98,6 @@ jobs:
           push: true
           tags: |
             ${{ env.FRONTEND_IMAGE }}:${{ env.VERSION }}
-            ${{ env.FRONTEND_IMAGE }}:latest
           build-args: |
             NGINX_CONF=nginx_fly_io.conf
 
@@ -144,7 +140,7 @@ jobs:
   notify:
     name: Discord Notification
     runs-on: ubuntu-24.04
-    needs: [deploy-render]
+    needs: [deploy-flyio]
     if: always()
     steps:
       - name: Send status to Discord
@@ -154,7 +150,7 @@ jobs:
           if [ "${{ needs.codeql.result }}" = "success" ] && \
             [ "${{ needs.backend-tests.result }}" = "success" ] && \
             [ "${{ needs.build-and-push.result }}" = "success" ] && \
-            [ "${{ needs.deploy-render.result }}" = "success" ]; then
+            [ "${{ needs.deploy-flyio.result }}" = "success" ]; then
             STATUS="success"
             COLOR=3066993
             TITLE="✅ CI/CD Success"
