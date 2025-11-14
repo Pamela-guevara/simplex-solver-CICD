@@ -13,30 +13,38 @@ function validatePositiveInteger(value) {
   return isNaN(num) || num <= 0 ? 1 : num
 }
 
-// Helper function to validate numeric input (can be negative and floats)
-function validateNumeric(value) {
-  // Allow digits, minus sign, and decimal point
-  // Handle multiple decimal points by keeping only the first one
+// Helper function to clean and validate numeric input (allows partial values)
+function cleanNumericInput(value) {
+  // Remove any non-numeric characters except minus and decimal point
   let cleaned = value.replace(/[^0-9.-]/g, '')
   
-  // Ensure only one decimal point
+  // Handle minus sign - only allow at the beginning
+  if (cleaned.includes('-')) {
+    const minusIndex = cleaned.indexOf('-')
+    if (minusIndex !== 0) {
+      // Remove minus if not at start
+      cleaned = cleaned.replace(/-/g, '')
+    } else if ((cleaned.match(/-/g) || []).length > 1) {
+      // Keep only first minus
+      cleaned = '-' + cleaned.replace(/-/g, '')
+    }
+  }
+  
+  // Handle decimal point - only allow one
   const parts = cleaned.split('.')
   if (parts.length > 2) {
     cleaned = parts[0] + '.' + parts.slice(1).join('')
   }
   
-  // Handle minus sign - only allow at the beginning
-  if (cleaned.includes('-')) {
-    const minusCount = (cleaned.match(/-/g) || []).length
-    if (minusCount > 1 || cleaned.indexOf('-') !== 0) {
-      cleaned = cleaned.replace(/-/g, '')
-      if (cleaned && !cleaned.startsWith('-')) {
-        cleaned = '-' + cleaned
-      }
-    }
+  return cleaned
+}
+
+// Helper function to convert to number (for final validation)
+function parseNumericValue(value) {
+  if (!value || value === '-' || value === '.' || value === '-.') {
+    return 0
   }
-  
-  const num = parseFloat(cleaned)
+  const num = parseFloat(value)
   return isNaN(num) ? 0 : num
 }
 
@@ -45,10 +53,10 @@ export function LPForm({ onSolved }) {
   const [numVars, setNumVars] = useState(2)
   const [numCons, setNumCons] = useState(2)
   const [sense, setSense] = useState('max')
-  const [coefs, setCoefs] = useState([0, 0])
+  const [coefs, setCoefs] = useState(['0', '0'])
   const [constraints, setConstraints] = useState([
-    { coefficients: [0, 0], sign: '<=', rhs: 0 },
-    { coefficients: [0, 0], sign: '<=', rhs: 0 },
+    { coefficients: ['0', '0'], sign: '<=', rhs: '0' },
+    { coefficients: ['0', '0'], sign: '<=', rhs: '0' },
   ])
 
   // Effect to populate form when a request is loaded from cache
@@ -62,18 +70,18 @@ export function LPForm({ onSolved }) {
       setNumCons(numConstraints)
       setSense(request.objective?.sense || 'max')
       
-      // Set objective coefficients
-      setCoefs(request.objective?.coefficients || [0, 0])
+      // Set objective coefficients (convert to strings for display)
+      setCoefs((request.objective?.coefficients || [0, 0]).map(v => String(v)))
       
-      // Set constraints
-      setConstraints(request.constraints?.map(c => ({
-        coefficients: c.coefficients || [],
+      // Set constraints (convert to strings for display)
+      setConstraints((request.constraints?.map(c => ({
+        coefficients: (c.coefficients || []).map(v => String(v)),
         sign: c.sign || '<=',
-        rhs: c.rhs || 0
+        rhs: String(c.rhs || 0)
       })) || [
-        { coefficients: [0, 0], sign: '<=', rhs: 0 },
-        { coefficients: [0, 0], sign: '<=', rhs: 0 },
-      ])
+        { coefficients: ['0', '0'], sign: '<=', rhs: '0' },
+        { coefficients: ['0', '0'], sign: '<=', rhs: '0' },
+      ]))
     }
   }, [request])
 
@@ -82,7 +90,7 @@ export function LPForm({ onSolved }) {
     setNumVars(m)
     setCoefs((prev) => {
       const arr = [...prev]
-      while (arr.length < m) arr.push(0)
+      while (arr.length < m) arr.push('0')
       while (arr.length > m) arr.pop()
       return arr
     })
@@ -90,7 +98,7 @@ export function LPForm({ onSolved }) {
       ...c,
       coefficients: [
         ...c.coefficients.slice(0, m),
-        ...Array(Math.max(0, m - c.coefficients.length)).fill(0),
+        ...Array(Math.max(0, m - c.coefficients.length)).fill('0'),
       ],
     })))
   }
@@ -100,7 +108,7 @@ export function LPForm({ onSolved }) {
     setNumCons(k)
     setConstraints((prev) => {
       const arr = [...prev]
-      while (arr.length < k) arr.push({ coefficients: Array(numVars).fill(0), sign: '<=', rhs: 0 })
+      while (arr.length < k) arr.push({ coefficients: Array(numVars).fill('0'), sign: '<=', rhs: '0' })
       while (arr.length > k) arr.pop()
       return arr
     })
@@ -110,10 +118,10 @@ export function LPForm({ onSolved }) {
     setNumVars(2)
     setNumCons(2)
     setSense('max')
-    setCoefs([0, 0])
+    setCoefs(['0', '0'])
     setConstraints([
-      { coefficients: [0, 0], sign: '<=', rhs: 0 },
-      { coefficients: [0, 0], sign: '<=', rhs: 0 },
+      { coefficients: ['0', '0'], sign: '<=', rhs: '0' },
+      { coefficients: ['0', '0'], sign: '<=', rhs: '0' },
     ])
     setRequest(null)
     setResult(null)
@@ -121,12 +129,16 @@ export function LPForm({ onSolved }) {
 
   async function onSubmit(e) {
     e.preventDefault()
+    // Ensure all values are numbers before submitting
     const payload = {
-      objective: { coefficients: coefs.map(Number), sense },
+      objective: { 
+        coefficients: coefs.map(v => parseNumericValue(String(v))), 
+        sense 
+      },
       constraints: constraints.map((c) => ({
-        coefficients: c.coefficients.map(Number),
+        coefficients: c.coefficients.map(v => parseNumericValue(String(v))),
         sign: c.sign,
-        rhs: Number(c.rhs),
+        rhs: parseNumericValue(String(c.rhs)),
       })),
       variable_names: Array.from({ length: numVars }, (_, i) => `x${i + 1}`),
     }
@@ -275,34 +287,37 @@ export function LPForm({ onSolved }) {
                   type="text"
                   value={coefs[j]}
                   onChange={(e) => {
-                    const validatedValue = validateNumeric(e.target.value)
-                    setCoefs((prev) => prev.map((v, idx) => (idx === j ? validatedValue : v)))
+                    const cleaned = cleanNumericInput(e.target.value)
+                    setCoefs((prev) => prev.map((v, idx) => (idx === j ? cleaned : v)))
+                  }}
+                  onBlur={(e) => {
+                    // Convert to number when field loses focus
+                    const numValue = parseNumericValue(e.target.value)
+                    setCoefs((prev) => prev.map((v, idx) => (idx === j ? numValue : v)))
                   }}
                   onKeyDown={(e) => {
-                // Allow: backspace, delete, tab, escape, enter, minus, period (decimal point)
-                if ([8, 9, 27, 13, 46, 189, 109, 190, 110].indexOf(e.keyCode) !== -1 ||
-                    // Allow: Ctrl+A, Ctrl+C, Ctrl+V, Ctrl+X
-                    (e.keyCode === 65 && e.ctrlKey === true) ||
-                    (e.keyCode === 67 && e.ctrlKey === true) ||
-                    (e.keyCode === 86 && e.ctrlKey === true) ||
-                    (e.keyCode === 88 && e.ctrlKey === true)) {
-                  // Additional check for decimal point: only allow if not already present
-                  if ((e.keyCode === 190 || e.keyCode === 110) && e.target.value.includes('.')) {
+                    // Allow navigation and editing keys
+                    if ([8, 9, 27, 13, 37, 38, 39, 40, 46].indexOf(e.keyCode) !== -1 ||
+                        // Allow: Ctrl+A, Ctrl+C, Ctrl+V, Ctrl+X, Ctrl+Z
+                        (e.ctrlKey && [65, 67, 86, 88, 90].indexOf(e.keyCode) !== -1)) {
+                      return;
+                    }
+                    // Allow minus only at the beginning or when replacing
+                    if ((e.keyCode === 189 || e.keyCode === 109) && 
+                        (e.target.selectionStart === 0 || e.target.selectionEnd === e.target.value.length)) {
+                      return;
+                    }
+                    // Allow decimal point if not already present
+                    if ((e.keyCode === 190 || e.keyCode === 110) && !e.target.value.includes('.')) {
+                      return;
+                    }
+                    // Allow numbers (0-9 on main keyboard and numpad)
+                    if ((e.keyCode >= 48 && e.keyCode <= 57) || (e.keyCode >= 96 && e.keyCode <= 105)) {
+                      return;
+                    }
+                    // Block everything else
                     e.preventDefault();
-                    return;
-                  }
-                  // Additional check for minus: only allow at the beginning
-                  if ((e.keyCode === 189 || e.keyCode === 109) && e.target.selectionStart !== 0) {
-                    e.preventDefault();
-                    return;
-                  }
-                  return;
-                }
-                // Ensure that it is a number and stop the keypress
-                if ((e.shiftKey || (e.keyCode < 48 || e.keyCode > 57)) && (e.keyCode < 96 || e.keyCode > 105)) {
-                  e.preventDefault();
-                }
-              }}
+                  }}
                   style={{
                     width: '60px',
                     padding: '6px 8px',
@@ -350,39 +365,45 @@ export function LPForm({ onSolved }) {
                 <div key={j} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                   <input
                     type="text"
-                    value={constraints[i]?.coefficients[j] ?? 0}
+                    value={constraints[i]?.coefficients[j] ?? '0'}
                     onChange={(e) => {
-                      const validatedValue = validateNumeric(e.target.value)
+                      const cleaned = cleanNumericInput(e.target.value)
                       setConstraints((prev) => prev.map((c, idx) => idx === i ? {
                         ...c,
-                        coefficients: c.coefficients.map((v, jj) => jj === j ? validatedValue : v),
+                        coefficients: c.coefficients.map((v, jj) => jj === j ? cleaned : v),
+                      } : c))
+                    }}
+                    onBlur={(e) => {
+                      // Convert to number when field loses focus
+                      const numValue = parseNumericValue(e.target.value)
+                      setConstraints((prev) => prev.map((c, idx) => idx === i ? {
+                        ...c,
+                        coefficients: c.coefficients.map((v, jj) => jj === j ? numValue : v),
                       } : c))
                     }}
                     onKeyDown={(e) => {
-                // Allow: backspace, delete, tab, escape, enter, minus, period (decimal point)
-                if ([8, 9, 27, 13, 46, 189, 109, 190, 110].indexOf(e.keyCode) !== -1 ||
-                    // Allow: Ctrl+A, Ctrl+C, Ctrl+V, Ctrl+X
-                    (e.keyCode === 65 && e.ctrlKey === true) ||
-                    (e.keyCode === 67 && e.ctrlKey === true) ||
-                    (e.keyCode === 86 && e.ctrlKey === true) ||
-                    (e.keyCode === 88 && e.ctrlKey === true)) {
-                  // Additional check for decimal point: only allow if not already present
-                  if ((e.keyCode === 190 || e.keyCode === 110) && e.target.value.includes('.')) {
-                    e.preventDefault();
-                    return;
-                  }
-                  // Additional check for minus: only allow at the beginning
-                  if ((e.keyCode === 189 || e.keyCode === 109) && e.target.selectionStart !== 0) {
-                    e.preventDefault();
-                    return;
-                  }
-                  return;
-                }
-                // Ensure that it is a number and stop the keypress
-                if ((e.shiftKey || (e.keyCode < 48 || e.keyCode > 57)) && (e.keyCode < 96 || e.keyCode > 105)) {
-                  e.preventDefault();
-                }
-              }}
+                      // Allow navigation and editing keys
+                      if ([8, 9, 27, 13, 37, 38, 39, 40, 46].indexOf(e.keyCode) !== -1 ||
+                          // Allow: Ctrl+A, Ctrl+C, Ctrl+V, Ctrl+X, Ctrl+Z
+                          (e.ctrlKey && [65, 67, 86, 88, 90].indexOf(e.keyCode) !== -1)) {
+                        return;
+                      }
+                      // Allow minus only at the beginning or when replacing
+                      if ((e.keyCode === 189 || e.keyCode === 109) && 
+                          (e.target.selectionStart === 0 || e.target.selectionEnd === e.target.value.length)) {
+                        return;
+                      }
+                      // Allow decimal point if not already present
+                      if ((e.keyCode === 190 || e.keyCode === 110) && !e.target.value.includes('.')) {
+                        return;
+                      }
+                      // Allow numbers (0-9 on main keyboard and numpad)
+                      if ((e.keyCode >= 48 && e.keyCode <= 57) || (e.keyCode >= 96 && e.keyCode <= 105)) {
+                        return;
+                      }
+                      // Block everything else
+                      e.preventDefault();
+                    }}
                     style={{
                       width: '60px',
                       padding: '6px 8px',
@@ -416,26 +437,39 @@ export function LPForm({ onSolved }) {
               </select>
               <input 
                 type="text" 
-                value={constraints[i]?.rhs ?? 0} 
+                value={constraints[i]?.rhs ?? '0'} 
                 onChange={(e) => {
-                  const validatedValue = validateNumeric(e.target.value)
-                  setConstraints((prev) => prev.map((c, idx) => idx === i ? { ...c, rhs: validatedValue } : c))
+                  const cleaned = cleanNumericInput(e.target.value)
+                  setConstraints((prev) => prev.map((c, idx) => idx === i ? { ...c, rhs: cleaned } : c))
+                }}
+                onBlur={(e) => {
+                  // Convert to number when field loses focus
+                  const numValue = parseNumericValue(e.target.value)
+                  setConstraints((prev) => prev.map((c, idx) => idx === i ? { ...c, rhs: numValue } : c))
                 }}
                 onKeyDown={(e) => {
-                // Allow: backspace, delete, tab, escape, enter, minus, period
-                if ([8, 9, 27, 13, 46, 189, 109, 190, 110].indexOf(e.keyCode) !== -1 ||
-                    // Allow: Ctrl+A, Ctrl+C, Ctrl+V, Ctrl+X
-                    (e.keyCode === 65 && e.ctrlKey === true) ||
-                    (e.keyCode === 67 && e.ctrlKey === true) ||
-                    (e.keyCode === 86 && e.ctrlKey === true) ||
-                    (e.keyCode === 88 && e.ctrlKey === true)) {
-                  return;
-                }
-                // Ensure that it is a number and stop the keypress
-                if ((e.shiftKey || (e.keyCode < 48 || e.keyCode > 57)) && (e.keyCode < 96 || e.keyCode > 105)) {
+                  // Allow navigation and editing keys
+                  if ([8, 9, 27, 13, 37, 38, 39, 40, 46].indexOf(e.keyCode) !== -1 ||
+                      // Allow: Ctrl+A, Ctrl+C, Ctrl+V, Ctrl+X, Ctrl+Z
+                      (e.ctrlKey && [65, 67, 86, 88, 90].indexOf(e.keyCode) !== -1)) {
+                    return;
+                  }
+                  // Allow minus only at the beginning or when replacing
+                  if ((e.keyCode === 189 || e.keyCode === 109) && 
+                      (e.target.selectionStart === 0 || e.target.selectionEnd === e.target.value.length)) {
+                    return;
+                  }
+                  // Allow decimal point if not already present
+                  if ((e.keyCode === 190 || e.keyCode === 110) && !e.target.value.includes('.')) {
+                    return;
+                  }
+                  // Allow numbers (0-9 on main keyboard and numpad)
+                  if ((e.keyCode >= 48 && e.keyCode <= 57) || (e.keyCode >= 96 && e.keyCode <= 105)) {
+                    return;
+                  }
+                  // Block everything else
                   e.preventDefault();
-                }
-              }}
+                }}
                 style={{
                   width: '60px',
                   padding: '6px 8px',

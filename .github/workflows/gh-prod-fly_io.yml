@@ -3,7 +3,7 @@ name: CI · Build · CodeQL · GHCR · Fly.io · Discord
 on:
   push:
     branches: ["main", "master"]
-  #workflow_dispatch:
+  
 
 env:
   VERSION: v1.1.${{ github.run_number }}
@@ -142,7 +142,7 @@ jobs:
   notify:
     name: Discord Notification
     runs-on: ubuntu-24.04
-    needs: [deploy-flyio]
+    needs: [codeql, backend-tests, build-and-push, deploy-flyio]
     if: always()
     steps:
       - name: Send status to Discord
@@ -180,7 +180,7 @@ jobs:
                 {"name": "CodeQL", "value": "${{ needs.codeql.result }}", "inline": true},
                 {"name": "Backend Tests", "value": "${{ needs.backend-tests.result }}", "inline": true},
                 {"name": "Build & Push", "value": "${{ needs.build-and-push.result }}", "inline": true},
-                {"name": "Deploy to Render", "value": "${{ needs.deploy-flyio.result }}", "inline": true}
+                {"name": "Deploy to Fly.io", "value": "${{ needs.deploy-flyio.result }}", "inline": true}
               ]
             }]
           }
